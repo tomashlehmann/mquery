@@ -7,6 +7,7 @@ from functools import lru_cache
 import random
 from yara import SyntaxError
 import config
+import plugins
 from lib.ursadb import UrsaDb
 from lib.yaraparse import parse_yara, combine_rules
 from util import make_redis, setup_logging
@@ -131,8 +132,8 @@ def job_daemon() -> None:
     setup_logging()
     logging.info("Daemon running...")
 
-    for extractor in config.METADATA_EXTRACTORS:
-        logging.info("Plugin loaded: %s", extractor.__class__.__name__)
+    for extractor in plugins.METADATA_PLUGINS:
+        logging.info("Plugin loaded: %s", extractor.name)
         extractor.set_redis(redis)
 
     logging.info("Daemon loaded, entering the main loop...")
@@ -153,16 +154,15 @@ def job_daemon() -> None:
 def update_metadata(job_hash: str, file_path: str, matches: List[str]) -> None:
     current_meta: Dict[str, Any] = {}
 
-    for extractor in config.METADATA_EXTRACTORS:
-        extr_name = extractor.__class__.__name__
+    for extractor in plugins.METADATA_PLUGINS:
         local_meta: Dict[str, Any] = {}
         deps = extractor.__depends_on__
 
         for dep in deps:
             if dep not in current_meta:
                 raise RuntimeError(
-                    "Configuration problem {} depends on {} but is declared earlier in config.".format(
-                        extr_name, dep
+                    "Configuration problem {} depends on {} but is declared earlier in METADATA_PLUGINS.".format(
+                        extractor.name, dep
                     )
                 )
 
@@ -170,7 +170,7 @@ def update_metadata(job_hash: str, file_path: str, matches: List[str]) -> None:
             local_meta.update(current_meta[dep])
 
         local_meta.update(job=job_hash)
-        current_meta[extr_name] = extractor.extract(file_path, local_meta)
+        current_meta[extractor.name] = extractor.run(file_path, local_meta)
 
     # flatten
     flat_meta: Dict[str, Any] = {}
